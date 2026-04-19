@@ -86,9 +86,20 @@ MICROSOFT_CLIENT_ID=<your-azure-app-client-id>
 MICROSOFT_CLIENT_SECRET=<your-azure-app-client-secret>
 MICROSOFT_CLIENT_TENANT_ID=<your-azure-tenant-id>
 MICROSOFT_OAUTH_SCOPE=openid email profile Mail.Read Mail.Send Mail.ReadWrite Calendars.ReadWrite Sites.Read.All Files.Read.All
+
+# Optional — encrypt token cache files at rest (recommended)
+OPENWEBUI_TOKEN_CACHE_KEY=<your-strong-passphrase>
 ```
 
 > **Admin Panel alternative:** If you have already started OpenWebUI once, the scope value may be stored in the database. Update it via **Admin Panel → Settings → OAuth → Microsoft OAuth Scope** instead of (or in addition to) the `.env` file.
+
+### Token cache encryption (optional but recommended)
+
+When `OPENWEBUI_TOKEN_CACHE_KEY` is set, each user's token cache file is encrypted at rest using **AES-256 via Fernet** (key derived with PBKDF2-HMAC-SHA256). Without this variable the files are stored as plain JSON (same behaviour as before).
+
+- Use any strong passphrase — it never leaves the server.
+- All three tools share the same key and the same `token_cache_dir`, so existing plain-text cache files are **automatically re-encrypted** on the next successful token refresh — no manual migration needed.
+- If you remove the key or change it, users will need to sign in again via `authenticate_with_microsoft`.
 
 ---
 
@@ -116,6 +127,15 @@ The Calendar tool has one additional Valve:
 | Valve | Description | Default |
 |---|---|---|
 | `default_timezone` | IANA timezone for event times | `UTC` — change to e.g. `Europe/Berlin` |
+
+The SharePoint tool has additional Valves for document content extraction:
+
+| Valve | Description | Default |
+|---|---|---|
+| `openwebui_base_url` | Base URL of this OpenWebUI instance | Auto-detected from request |
+| `max_document_size_mb` | Maximum file size for document extraction | `20` |
+
+> Document extraction now always uses the logged-in user's own OpenWebUI session, so uploaded temporary files are created, read, and deleted under that user's identity.
 
 ---
 
@@ -151,6 +171,7 @@ Open the link in any browser, enter the code, and sign in. **One authentication 
 | Function | Description |
 |---|---|
 | `authenticate_with_microsoft` | Trigger device-code sign-in |
+| `disconnect_microsoft_account` | Delete the saved token cache and sign out |
 | `get_emails` | List emails by time period with optional unread filter |
 | `search_emails` | Full-text and sender search |
 | `get_email_details` | Fetch full body of a single email |
@@ -163,23 +184,41 @@ Open the link in any browser, enter the code, and sign in. **One authentication 
 | Function | Description |
 |---|---|
 | `authenticate_with_microsoft` | Trigger device-code sign-in |
+| `disconnect_microsoft_account` | Delete the saved token cache and sign out |
 | `get_events` | List events for today, this week, a date, or a date range |
 | `get_event_details` | Full details of a single event including body and attendee responses |
 | `find_available_meeting_times` | Find free slots across multiple attendees |
 | `create_event` | Create a new meeting with Teams link and invitations |
 | `update_event` | Change title, time, location, or description of an event |
 | `delete_event` | Cancel an event and notify attendees |
+| `list_categories` | List all Outlook color categories |
+| `set_event_categories` | Assign categories to an event |
+| `create_category` | Create a new color category |
 
 ### SharePoint (`sharepoint_tool.py`)
 
 | Function | Description |
 |---|---|
 | `authenticate_with_microsoft` | Trigger device-code sign-in |
+| `disconnect_microsoft_account` | Delete the saved token cache and sign out |
 | `search_sharepoint` | Full-text search across all sites, pages, and documents |
 | `get_site_pages` | List all pages on a SharePoint site |
 | `get_page_content` | Extract plain-text content from a SharePoint page |
 | `list_documents` | List files in a document library, sorted by newest |
 | `search_in_site` | Scope a keyword search to a specific site |
+| `get_document_content` | Download a file and extract its text via the OpenWebUI pipeline (PDF, DOCX, XLSX, PPTX, …) |
+
+#### Document content extraction workflow
+
+```
+1. search_sharepoint / list_documents  →  find the file, note id, name, drive_id
+2. get_document_content(item_id=..., file_name=..., drive_id=...)  →  extracted text
+```
+
+Example prompts:
+- *"Summarise the Q3 budget spreadsheet on SharePoint"*
+- *"What does the onboarding PDF say about equipment requests?"*
+- *"Find the project charter and list its key milestones"*
 
 ---
 
@@ -189,6 +228,8 @@ Open the link in any browser, enter the code, and sign in. **One authentication 
 - Token cache files are stored server-side, keyed by OpenWebUI user ID. Each user's tokens are isolated in a separate file.
 - No application-level (app-only) permissions are used. The app cannot access any data without a user actively authenticating.
 - Removing a user's cache file at `<token_cache_dir>/<user_id>.json` immediately revokes their stored session.
+- When `OPENWEBUI_TOKEN_CACHE_KEY` is set, cache files are encrypted with AES-256-GCM (Fernet). An attacker with filesystem access cannot read tokens without the key.
+- Users can sign themselves out at any time by saying *"disconnect my Microsoft account"* — this deletes their cache file from the server.
 
 ---
 
